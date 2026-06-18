@@ -26,11 +26,11 @@ from playwright_stealth import Stealth
 # =========================
 HEADLESS = True
 
-COOKIES_DIR = Path("cookies")
+COOKIES_DIR = Path("cookies_gpt")
 encrypted_files = list(COOKIES_DIR.glob("*.encrypted"))
 
 if not encrypted_files:
-    print("❌ No .encrypted cookie files found in 'cookies/' folder", flush=True)
+    print("❌ No .encrypted cookie files found in 'cookies_gpt/' folder", flush=True)
     sys.exit(1)
 
 print(f"[OK] Found {len(encrypted_files)} cookie file(s) to process.", flush=True)

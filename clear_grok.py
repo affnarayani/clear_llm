@@ -24,7 +24,7 @@ from playwright_stealth import Stealth
 # =========================
 HEADLESS = True
 
-GROK_COOKIES_FILE = "grok_cookies.json.encrypted"
+GROK_COOKIES_FILE = "cookies_grok/grok_cookies.json.encrypted"
 
 TEMP_DIR = Path("temp")
 TEMP_DIR.mkdir(exist_ok=True)
