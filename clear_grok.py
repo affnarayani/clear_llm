@@ -4,10 +4,11 @@ import time
 import base64
 import random
 import shutil
+import sys
 import requests
 from pathlib import Path
 from typing import List, Dict, Any
-
+import re
 from dotenv import load_dotenv
 
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -132,6 +133,9 @@ def run():
 
     pw = pw_cm.__enter__()
 
+    # Global tracking variable locator failure track karne ke liye
+    locator_failed = False
+
     try:
         browser = pw.chromium.launch(
             headless=HEADLESS,
@@ -179,23 +183,35 @@ def run():
         # 3. Scrolling specific Settings locator to view (Syntax Fixed)
         print("[STEP] Scrolling to Settings section to find the button...", flush=True)
         try:
-            settings_section = page.get_by_label('Settings', exact=True).locator('div').filter(has_text='Improve the ModelBy allowing').nth(1)
+            settings_section = page.get_by_text('Data ControlsImprove the')
             settings_section.scroll_into_view_if_needed()
             print("[OK] Scrolled to target Settings view", flush=True)
         except Exception as scroll_err:
-            print(f"[WARNING] Could not scroll to settings section: {scroll_err}", flush=True)
+            print(f"[ERROR] Locator not found (Settings section): {scroll_err}", flush=True)
+            locator_failed = True
+            return
 
         # 4. First click on 'Delete All Conversations' (Syntax Fixed)
-        print("[STEP] Clicking 'Delete All Conversations' for the first time...", flush=True)
-        page.get_by_role('button', name='Delete All Conversations').click()
+        print("[STEP] Clicking 'Delete All Conversations'...", flush=True)
+        try:
+            page.locator('div').filter(has_text=re.compile(r'^Delete All ConversationsDelete all of your conversation data\.Delete$')).get_by_role('button').click()
+        except Exception as click_err1:
+            print(f"[ERROR] Locator not found (Delete All Conversations button): {click_err1}", flush=True)
+            locator_failed = True
+            return
         
         delay2 = random.randint(15, 30)
         print(f"[INFO] Waiting for {delay2} seconds after first click...", flush=True)
         time.sleep(delay2)
 
         # 5. Second click on 'Delete All Conversations' (Confirmation - Syntax Fixed)
-        print("[STEP] Clicking 'Delete All Conversations' for the second time...", flush=True)
-        page.get_by_role('button', name='Delete All Conversations').click()
+        print("[STEP] Clicking 'Are You Sure?' button...", flush=True)
+        try:
+            page.get_by_role('button', name='Are you sure?').click()
+        except Exception as click_err2:
+            print(f"[ERROR] Locator not found (Are you sure? button): {click_err2}", flush=True)
+            locator_failed = True
+            return
         
         delay3 = random.randint(15, 30)
         print(f"[INFO] Waiting for {delay3} seconds after second click...", flush=True)
@@ -230,6 +246,11 @@ def run():
             pass
 
         print("[DONE] Script finished", flush=True)
+        
+        # Agar koi bhi locator miss hua toh cleanup ke baad exit 1 karega
+        if locator_failed:
+            print("[EXIT] Terminating process with exit code 1 due to missing locator.", flush=True)
+            sys.exit(1)
 
 
 if __name__ == "__main__":
