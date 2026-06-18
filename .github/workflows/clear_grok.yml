@@ -2,7 +2,7 @@ name: Clean Grok
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # Everyday at 12:00 AM UTC
+    - cron: "0 5 * * *"  
   workflow_dispatch:
 
 env:
