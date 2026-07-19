@@ -30,7 +30,7 @@ COOKIES_DIR = Path("cookies_gpt")
 encrypted_files = list(COOKIES_DIR.glob("*.encrypted"))
 
 if not encrypted_files:
-    print("❌ No .encrypted cookie files found in 'cookies_gpt/' folder", flush=True)
+    print("No .encrypted cookie files found in 'cookies_gpt/' folder", flush=True)
     sys.exit(1)
 
 print(f"[OK] Found {len(encrypted_files)} cookie file(s) to process.", flush=True)
@@ -48,7 +48,7 @@ load_dotenv()
 DECRYPT_KEY = os.getenv("DECRYPT_KEY")
 
 if not DECRYPT_KEY:
-    print("❌ DECRYPT_KEY missing in environment variables.", flush=True)
+    print("DECRYPT_KEY missing in environment variables.", flush=True)
     sys.exit(1)
 
 
@@ -85,7 +85,7 @@ def _decrypt_payload(payload: Dict[str, Any], password: str) -> bytes:
     try:
         return aesgcm.decrypt(nonce, ciphertext, None)
     except InvalidTag:
-        print("❌ Decryption failed (InvalidTag)", flush=True)
+        print("Decryption failed (InvalidTag)", flush=True)
         sys.exit(1)
 
 
@@ -122,7 +122,7 @@ def load_cookies(file_path: Path) -> List[Dict[str, Any]]:
         print("[OK] Cookies loaded", flush=True)
         return cookies
     except Exception as crypto_err:
-        print(f"❌ [CRITICAL CRYPTO ERROR]: File {file_path.name} parse/decrypt failed: {crypto_err}", flush=True)
+        print(f"[CRITICAL CRYPTO ERROR]: File {file_path.name} parse/decrypt failed: {crypto_err}", flush=True)
         sys.exit(1)
 
 
@@ -268,7 +268,7 @@ def run():
         except SystemExit:
             raise
         except Exception as e:
-            print(f"\n❌ [CRITICAL ERROR] Operation failed for {cookie_file.name}: {e}", flush=True)
+            print(f"\n[CRITICAL ERROR] Operation failed for {cookie_file.name}: {e}", flush=True)
             print("[STEP] Executing emergency browser teardown and exiting program via sys.exit(1)...", flush=True)
             # ============================================
             # NEW: CAPTURE SCREENSHOT ON ERROR
@@ -278,8 +278,27 @@ def run():
                     screenshot_path = "clear_gpt_error_screenshot.png"
                     page.screenshot(path=screenshot_path, full_page=True)
                     print(f"[OK] Error screenshot captured: {screenshot_path}", flush=True)
+                    
+                    imgbb_key = os.getenv("IMGBBB_API_KEY")
+                    if imgbb_key:
+                        print("[OK] Uploading screenshot to ImgBB...", flush=True)
+                        url = f"https://api.imgbb.com/1/upload?expiration=86400&key={imgbb_key}"
+                        
+                        with open(screenshot_path, "rb") as file:
+                            response = requests.post(url, files={"image": file})
+                        
+                        if response.status_code == 200:
+                            res_data = response.json()
+                            direct_url = res_data["data"]["display_url"]
+                            print("\n" + "="*50, flush=True)
+                            print(f"DIRECT SCREENSHOT LINK: {direct_url}", flush=True)
+                            print("="*50 + "\n", flush=True)
+                        else:
+                            print(f"[WARNING] ImgBB Upload Failed Status: {response.status_code}", flush=True)
+                    else:
+                        print("[WARNING] IMGBBB_API_KEY environment variable not found.", flush=True)
                 except Exception as screenshot_err:
-                    print(f"[WARNING] Could not capture screenshot: {screenshot_err}", flush=True)
+                    print(f"[WARNING] Could not capture or upload screenshot: {screenshot_err}", flush=True)
             # ============================================
             if browser:
                 try:
