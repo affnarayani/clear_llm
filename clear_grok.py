@@ -113,19 +113,24 @@ def load_cookies(file_path: Path) -> List[Dict[str, Any]]:
     print("[OK] Cookies loaded and sanitized", flush=True)
     return cookies
 
-def upload_to_tmpfiles(screenshot_path):
-    url = "https://tmpfiles.org/api/v1/upload"
-    
+def upload_to_onlyfiles(screenshot_path):
+    url = "https://api.onlyfiles.com/v1/upload"
+    expire_seconds = 172800  # 48 hours
+
     with open(screenshot_path, "rb") as file:
-        response = requests.post(url, files={"file": file})
-        
+        response = requests.post(url, files={"file": file}, data={"expire": expire_seconds})
+
     if response.status_code == 200:
         res_data = response.json()
-        # Direct view URL banane ke liye '/dl/' replace karte hain
-        page_url = res_data["data"]["url"]
-        direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-        print(f"👉 DIRECT LINK (Expires in 2 Hours): {direct_url}")
-        return direct_url
+        if res_data.get("status"):
+            # onlyfiles.com direct download URL already return karta hai
+            direct_url = res_data["data"]["file"]["url"]["full"]
+            print(f"👉 DIRECT LINK (Expires in 48 Hours): {direct_url}")
+            return direct_url
+        else:
+            error_msg = res_data.get("error", {}).get("message", "Unknown error")
+            print(f"[WARNING] Upload Failed: {error_msg}")
+            return None
     else:
         print(f"[WARNING] Upload Failed: {response.status_code}")
         return None
@@ -275,7 +280,7 @@ def run():
                     page.screenshot(path=screenshot_path, full_page=True)
                     print(f"[OK] Error screenshot captured: {screenshot_path}", flush=True)
                     
-                    upload_to_tmpfiles(screenshot_path)
+                    upload_to_onlyfiles(screenshot_path)
                 except Exception as screenshot_err:
                     print(f"[WARNING] Could not capture or upload screenshot: {screenshot_err}", flush=True)
             # ============================================
