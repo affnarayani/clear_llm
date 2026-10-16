@@ -135,7 +135,6 @@ def upload_to_onlyfiles(screenshot_path):
     if response.status_code == 200:
         res_data = response.json()
         if res_data.get("status"):
-            # onlyfiles.com direct download URL already return karta hai
             direct_url = res_data["data"]["file"]["url"]["full"]
             print(f"👉 DIRECT LINK (Expires in 48 Hours): {direct_url}")
             return direct_url
@@ -173,7 +172,6 @@ def run():
             pw_cm = stealth.use_sync(sync_playwright())
             pw = pw_cm.__enter__()
 
-            # GITHUB RUNNER COMPATIBILITY FIX 1: Window size arguments pass kiye
             browser = pw.chromium.launch(
                 headless=HEADLESS,
                 args=[
@@ -183,7 +181,6 @@ def run():
                 ]
             )
 
-            # GITHUB RUNNER COMPATIBILITY FIX 2: no_viewport hata kar fixed large desktop size set kiya
             context = browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=USER_AGENT
@@ -205,85 +202,40 @@ def run():
             print("[OK] URL opened and Login completed via session cookies", flush=True)
 
             # ==================================================
-            # AUTOMATION STEPS WITH FIXED 15-30 SEC DELAYS
+            # UPDATED AUTOMATION FLOW
             # ==================================================
-            
-            # Step 1: Wait then locate profile menu button
-            print("[STEP] Waiting 15-30s before interacting with profile menu...", flush=True)
+
+            print("[STEP] Navigating directly to Data controls settings...", flush=True)
+            page.goto(
+                "https://chatgpt.com/settings/data-controls",
+                wait_until="domcontentloaded"
+            )
+            print("[OK] Data controls URL loaded", flush=True)
+
+            # Wait random 15-30 seconds
+            print("[STEP] Waiting 15-30s...", flush=True)
             custom_random_wait(15, 30)
 
-            sidebar_btn = page.get_by_role("button", name="Open sidebar")
-            
-            # Check karega ki kya layout me "Open sidebar" button generated hai
-            if sidebar_btn.is_visible():
-                # Agar visible hai aur closed state (aria-expanded="false") me hai toh collapse expand karenge
-                if sidebar_btn.get_attribute("aria-expanded") == "false":
-                    print("[STEP] Sidebar is closed. Opening side bar...", flush=True)
-                    sidebar_btn.click(force=True)
-                    print("[STEP] Side bar opened successfully.", flush=True)
-                    custom_random_wait(15, 30)
-                else:
-                    print("[STEP] Side bar button is visible but already expanded. Proceeding...", flush=True)
-            else:
-                print("[STEP] Side bar toggle button not present in current view layout. Proceeding...", flush=True)
-            
-            print("[STEP] Locating profile menu button...", flush=True)
-            profile_button = page.get_by_test_id("accounts-profile-button").last
-            profile_button.wait_for(state="visible", timeout=30000)
-            profile_button.click()
-            print("[OK] Profile menu clicked", flush=True)
-            
-            # Step 2: Wait then click Settings option
-            print("[STEP] Waiting 15-30s before clicking Settings...", flush=True)
-            custom_random_wait(15, 30)
-
-            print("[STEP] Clicking Settings option...", flush=True)
-            settings_item = page.get_by_test_id("settings-menu-item")
-            if not settings_item.is_visible():
-                settings_item = page.get_by_role("menuitem", name="Settings")
-            
-            settings_item.wait_for(state="visible", timeout=30000)
-            settings_item.click()
-            print("[OK] Settings opened", flush=True)
-
-            # Step 3: Wait then click Data Controls tab
-            print("[STEP] Waiting 15-30s before switching to Data controls tab...", flush=True)
-            custom_random_wait(15, 30)
-
-            print("[STEP] Navigating to Data controls tab...", flush=True)
-            data_controls_tab = page.get_by_test_id("data-controls-tab")
-            if not data_controls_tab.is_visible():
-                data_controls_tab = page.get_by_role("tab", name="Data controls")
-                
-            data_controls_tab.wait_for(state="visible", timeout=30000)
-            data_controls_tab.click()
-            print("[OK] Data controls tab loaded", flush=True)
-
-            # Step 4: Wait then trigger Delete All Chats confirmation
-            print("[STEP] Waiting 15-30s before clicking 'Delete all' chats...", flush=True)
-            custom_random_wait(15, 30)
-
-            print("[STEP] Clicking 'Delete all' chats button...", flush=True)
-            delete_all_btn = page.get_by_role("button", name="Delete all Delete all chats")
+            # Locate and click first 'Delete all' button
+            print("[STEP] Clicking first 'Delete all' button...", flush=True)
+            delete_all_btn = page.get_by_role("button", name="Delete all")
             delete_all_btn.wait_for(state="visible", timeout=30000)
             delete_all_btn.click()
-            print("[OK] Delete all confirmation prompt triggered", flush=True)
+            print("[OK] First 'Delete all' clicked", flush=True)
 
-            # Step 5: Wait then click final Deletion Confirmation button
-            print("[STEP] Waiting 15-30s before clicking 'Confirm deletion'...", flush=True)
-            custom_random_wait(15, 30)
+            # Wait random 6-12 seconds
+            print("[STEP] Waiting 6-12s before confirmation...", flush=True)
+            custom_random_wait(6, 12)
 
-            print("[STEP] Clicking 'Confirm deletion' button...", flush=True)
-            confirm_btn = page.get_by_test_id("confirm-delete-all-chats-button")
-            if not confirm_btn.is_visible():
-                confirm_btn = page.get_by_role("button", name="Confirm deletion")
-                
+            # Again locate and click confirmation 'Delete all' button
+            print("[STEP] Clicking confirmation 'Delete all' button...", flush=True)
+            confirm_btn = page.get_by_role("button", name="Delete all")
             confirm_btn.wait_for(state="visible", timeout=30000)
             confirm_btn.click()
-            print("[OK] Deletion confirmed successfully", flush=True)
+            print("[OK] Confirmation 'Delete all' clicked successfully", flush=True)
 
-            # Step 6: Post-action finalized wait interval before session destruction
-            print("[STEP] Action complete for this profile. Finalizing safety wait...", flush=True)
+            # Post-action randomized wait interval (15-30s) before session destruction
+            print("[STEP] Waiting 15-30s before browser exit...", flush=True)
             custom_random_wait(15, 30)
 
         except SystemExit:
@@ -291,9 +243,8 @@ def run():
         except Exception as e:
             print(f"\n[CRITICAL ERROR] Operation failed for {cookie_file.name}: {e}", flush=True)
             print("[STEP] Executing emergency browser teardown and exiting program via sys.exit(1)...", flush=True)
-            # ============================================
-            # NEW: CAPTURE SCREENSHOT ON ERROR
-            # ============================================
+            
+            # CAPTURE SCREENSHOT ON ERROR
             if 'page' in locals() and page:
                 try:
                     screenshot_path = "clear_gpt_error_screenshot.png"
@@ -303,7 +254,7 @@ def run():
                     upload_to_onlyfiles(screenshot_path)
                 except Exception as screenshot_err:
                     print(f"[WARNING] Could not capture or upload screenshot: {screenshot_err}", flush=True)
-            # ============================================
+            
             if browser:
                 try:
                     browser.close()
