@@ -1,289 +1,122 @@
 import os
-import json
-import time
-import base64
-import random
 import shutil
 import sys
-import requests
-from pathlib import Path
-from typing import List, Dict, Any
-import re
-from dotenv import load_dotenv
 
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.exceptions import InvalidTag
-
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+from common.config import get_config, platform_config, ROOT
+from common.crypto_utils import load_cookies
+from common.browser import start_playwright, launch_browser, new_context, shutdown
+from common.locator_loader import load_locators
+from common.actions import click_with_fallback, scroll_down
+from common.screenshot import capture_error_screenshot
+from common.waits import sleep_random
+from common.locator_correction import reconcile_startup
 
 
-# =========================
-# CONFIG
-# =========================
-HEADLESS = True
-
-GROK_COOKIES_FILE = "cookies_grok/grok_cookies.json.encrypted"
-
-TEMP_DIR = Path("temp")
-TEMP_DIR.mkdir(exist_ok=True)
-
-PBKDF2_ITERATIONS = 200_000
-
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+PLATFORM = "grok"
+GROK_COOKIES_FILE = "grok_cookies/grok_cookies.json.encrypted"
+TEMP_DIR = ROOT / "temp"
 
 
-# =========================
-# ENV
-# =========================
-load_dotenv()
-
-DECRYPT_KEY = os.getenv("DECRYPT_KEY")
-
-if not DECRYPT_KEY:
-    raise RuntimeError("DECRYPT_KEY missing")
-
-
-# =========================
-# CRYPTO
-# =========================
-def _derive_key(password: bytes, salt: bytes) -> bytes:
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=PBKDF2_ITERATIONS,
-    )
-    return kdf.derive(password)
-
-
-def _decrypt_payload(payload: Dict[str, Any], password: str) -> bytes:
-    salt = base64.b64decode(payload["s"])
-    nonce = base64.b64decode(payload["n"])
-    ciphertext = base64.b64decode(payload["ct"])
-
-    key = _derive_key(password.encode("utf-8"), salt)
-    aesgcm = AESGCM(key)
-
-    try:
-        return aesgcm.decrypt(nonce, ciphertext, None)
-    except InvalidTag:
-        raise RuntimeError("Decryption failed (InvalidTag)")
-
-
-def load_cookies(file_path: Path) -> List[Dict[str, Any]]:
-    print("[STEP] Loading cookies...", flush=True)
-
-    with file_path.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-
-    plaintext = _decrypt_payload(payload, DECRYPT_KEY)
-    cookies = json.loads(plaintext.decode("utf-8"))
-
-    # cookies ko normalize aur sanitize karne ke liye
-    for c in cookies:
-        # 1. SameSite handle karne ke liye
-        if "sameSite" in c:
-            val = str(c["sameSite"]).lower()
-
-            if val in ["no_restriction", "none", "unspecified", "null"]:
-                c["sameSite"] = "None"
-            elif val == "lax":
-                c["sameSite"] = "Lax"
-            elif val == "strict":
-                c["sameSite"] = "Strict"
-            else:
-                c["sameSite"] = "Lax"
-
-        # 2. partitionKey Fix: Object ko String mein badalne ya remove karne ke liye
-        if "partitionKey" in c:
-            p_key = c["partitionKey"]
-            if isinstance(p_key, dict):
-                # Agar dict ke andar topLevelSite string hai, toh use nikal lo
-                if "topLevelSite" in p_key and isinstance(p_key["topLevelSite"], str):
-                    c["partitionKey"] = p_key["topLevelSite"]
-                else:
-                    del c["partitionKey"]
-            elif not isinstance(p_key, str):
-                # Agar string ya dict dono nahi hai, toh remove kar do
-                del c["partitionKey"]
-
-    print("[OK] Cookies loaded and sanitized", flush=True)
-    return cookies
-
-def upload_to_onlyfiles(screenshot_path):
-    url = "https://api.onlyfiles.com/v1/upload"
-    expire_seconds = 172800  # 48 hours
-
-    with open(screenshot_path, "rb") as file:
-        response = requests.post(url, files={"file": file}, data={"expire": expire_seconds})
-
-    if response.status_code == 200:
-        res_data = response.json()
-        if res_data.get("status"):
-            # onlyfiles.com direct download URL already return karta hai
-            direct_url = res_data["data"]["file"]["url"]["full"]
-            print(f"👉 DIRECT LINK (Expires in 48 Hours): {direct_url}")
-            return direct_url
-        else:
-            error_msg = res_data.get("error", {}).get("message", "Unknown error")
-            print(f"[WARNING] Upload Failed: {error_msg}")
-            return None
-    else:
-        print(f"[WARNING] Upload Failed: {response.status_code}")
-        return None
-
-# =========================
-# MAIN
-# =========================
 def run():
-    print("[START] Script started", flush=True)
+    cfg = get_config()
+    pc = platform_config(PLATFORM)
+    scroll_presses = pc.get("scroll_down_presses", 15)
 
-    cookies = load_cookies(Path(GROK_COOKIES_FILE))
+    reconcile_startup(PLATFORM, "locators/grok_locators.txt")
 
+    waits = cfg["waits"]
+    decrypt_key = os.getenv(cfg["env"]["decrypt_key"])
+    if not decrypt_key:
+        raise RuntimeError(f"{cfg['env']['decrypt_key']} missing")
+
+    TEMP_DIR.mkdir(exist_ok=True)
+
+    cookies = load_cookies(ROOT / GROK_COOKIES_FILE, decrypt_key, cfg["pbkdf2_iterations"])
     print(f"[OK] Total cookies loaded: {len(cookies)}", flush=True)
 
-    # =========================
-    # STEALTH SETUP
-    # =========================
-    stealth = Stealth()
-
-    pw_cm = stealth.use_sync(sync_playwright())
-
-    pw = pw_cm.__enter__()
-
-    # Global tracking variable locator failure track karne ke liye
+    browser = None
+    pw_cm = None
+    page = None
     locator_failed = False
 
     try:
-        browser = pw.chromium.launch(
-            headless=HEADLESS,
-            args=[
-                "--start-maximized",
-                "--disable-blink-features=AutomationControlled"
-            ]
-        )
+        pw, pw_cm = start_playwright()
+        browser = launch_browser(pw, pc)
 
-        context = browser.new_context(
-            no_viewport=True,
-            user_agent=USER_AGENT
-        )
+        context = new_context(browser, pc)
 
         print("[STEP] Adding cookies to browser context...", flush=True)
-
         context.add_cookies(cookies)
 
         page = context.new_page()
-
         print("[OK] Cookies added successfully", flush=True)
 
+        loc = load_locators("locators/grok_locators.txt", page)
+
         print("[STEP] Opening Grok...", flush=True)
-
-        page.goto(
-            "https://grok.com/",
-            wait_until="domcontentloaded"
-        )
-
+        page.goto("https://grok.com/", wait_until="domcontentloaded")
         print("[OK] Grok opened with cookies (Logged In)", flush=True)
 
-        # 1. Wait after opening Grok homepage
-        initial_delay = random.randint(15, 30)
-        print(f"[INFO] Waiting for {initial_delay} seconds on homepage...", flush=True)
-        time.sleep(initial_delay)
+        print(f"[INFO] Waiting {waits['random_min_seconds']}-{waits['random_max_seconds']}s on homepage...", flush=True)
+        sleep_random(waits["random_min_seconds"], waits["random_max_seconds"])
 
-        # 2. Navigating to the data management page
         print("[STEP] Navigating to Grok data page...", flush=True)
         page.goto("https://grok.com/?_s=data", wait_until="domcontentloaded")
-        
-        delay1 = random.randint(15, 30)
-        print(f"[INFO] Waiting for {delay1} seconds on data page...", flush=True)
-        time.sleep(delay1)
 
-        # 3. Scrolling specific Settings locator to view (Syntax Fixed)
-        print("[STEP] Scrolling to Settings section to find the button...", flush=True)
-        try:
-            settings_section = page.get_by_text('Data ControlsImprove the')
-            settings_section.scroll_into_view_if_needed()
-            print("[OK] Scrolled to target Settings view", flush=True)
-        except Exception as scroll_err:
-            print(f"[ERROR] Locator not found (Settings section): {scroll_err}", flush=True)
+        print(f"[INFO] Waiting {waits['random_min_seconds']}-{waits['random_max_seconds']}s on data page...", flush=True)
+        sleep_random(waits["random_min_seconds"], waits["random_max_seconds"])
+
+        print("[STEP] Focusing settings scroll area via 'Personalization' heading...", flush=True)
+        if not click_with_fallback(page, loc, "personalization_heading"):
             locator_failed = True
             return
 
-        # 4. First click on 'Delete All Conversations' (Syntax Fixed)
+        print(f"[STEP] Scrolling down via Down arrow key ({scroll_presses} presses max)...", flush=True)
+        stop_locator = loc.chain("delete_all_conversations_button")[0]
+        scroll_down(page, times=scroll_presses, stop_locator=stop_locator)
+        print("[OK] Scrolled down to reveal the delete button", flush=True)
+
         print("[STEP] Clicking 'Delete All Conversations'...", flush=True)
-        try:
-            page.locator('div').filter(has_text=re.compile(r'^Delete All ConversationsDelete all of your conversation data\.Delete$')).get_by_role('button').click()
-        except Exception as click_err1:
-            print(f"[ERROR] Locator not found (Delete All Conversations button): {click_err1}", flush=True)
+        if not click_with_fallback(page, loc, "delete_all_conversations_button"):
             locator_failed = True
             return
-        
-        delay2 = random.randint(15, 30)
-        print(f"[INFO] Waiting for {delay2} seconds after first click...", flush=True)
-        time.sleep(delay2)
 
-        # 5. Second click on 'Delete All Conversations' (Confirmation - Syntax Fixed)
-        print("[STEP] Clicking 'Are You Sure?' button...", flush=True)
-        try:
-            page.get_by_role('button', name='Are you sure?').click()
-        except Exception as click_err2:
-            print(f"[ERROR] Locator not found (Are you sure? button): {click_err2}", flush=True)
+        print(f"[INFO] Waiting {waits['random_min_seconds']}-{waits['random_max_seconds']}s after first click...", flush=True)
+        sleep_random(waits["random_min_seconds"], waits["random_max_seconds"])
+
+        print("[STEP] Clicking 'Are you sure?' button...", flush=True)
+        if not click_with_fallback(page, loc, "confirm_delete_conversations_button"):
             locator_failed = True
             return
-        
-        delay3 = random.randint(15, 30)
-        print(f"[INFO] Waiting for {delay3} seconds after second click...", flush=True)
-        time.sleep(delay3)
 
-        # 6. Final random wait before closing
-        final_delay = random.randint(15, 30)
-        print(f"[INFO] Final wait for {final_delay} seconds before closing the browser...", flush=True)
-        time.sleep(final_delay)
+        print(f"[INFO] Waiting {waits['random_min_seconds']}-{waits['random_max_seconds']}s after second click...", flush=True)
+        sleep_random(waits["random_min_seconds"], waits["random_max_seconds"])
+
+        print(f"[INFO] Final wait {waits['random_min_seconds']}-{waits['random_max_seconds']}s before closing the browser...", flush=True)
+        sleep_random(waits["random_min_seconds"], waits["random_max_seconds"])
 
     except Exception as e:
         print("[ERROR]", e, flush=True)
+        locator_failed = True
 
     finally:
-        try:
-            browser.close()
-        except:
-            pass
+        if locator_failed and page:
+            capture_error_screenshot(page, cfg)
+
+        shutdown(pw_cm, browser)
 
         try:
             if TEMP_DIR.exists():
                 shutil.rmtree(TEMP_DIR)
-
             TEMP_DIR.mkdir(exist_ok=True)
             print("[CLEANUP] Temp cleared", flush=True)
         except Exception as e:
             print("[CLEANUP ERROR]", e, flush=True)
 
-        try:
-            pw_cm.__exit__(None, None, None)
-        except:
-            pass
-
         print("[DONE] Script finished", flush=True)
-        
-        # Agar koi bhi locator miss hua toh cleanup ke baad exit 1 karega
+
         if locator_failed:
             print("[EXIT] Terminating process with exit code 1 due to missing locator.", flush=True)
-            # ============================================
-            # NEW: CAPTURE SCREENSHOT ON ERROR
-            # ============================================
-            if 'page' in locals() and page:
-                try:
-                    screenshot_path = "error_screenshot.png"
-                    page.screenshot(path=screenshot_path, full_page=True)
-                    print(f"[OK] Error screenshot captured: {screenshot_path}", flush=True)
-                    
-                    upload_to_onlyfiles(screenshot_path)
-                except Exception as screenshot_err:
-                    print(f"[WARNING] Could not capture or upload screenshot: {screenshot_err}", flush=True)
-            # ============================================
             sys.exit(1)
 
 

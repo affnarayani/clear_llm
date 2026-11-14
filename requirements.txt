@@ -3,3 +3,4 @@ python-dotenv
 requests
 playwright
 playwright-stealth
+google-genai>=2.21.0

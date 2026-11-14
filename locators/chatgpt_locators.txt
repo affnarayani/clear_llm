@@ -1,0 +1,5 @@
+# ChatGPT locators. Edit expressions here; Python loads them verbatim.
+# Format: <descriptive_name> = <exact playwright expression>   # vision: <description for Gemini fallback>
+
+delete_all_chat_history_button = page.get_by_role("button", name="Delete all")   # vision: the "Delete all" button on the Data controls settings page
+confirm_delete_all_button = page.get_by_role("button", name="Delete all")   # vision: the confirmation "Delete all" button inside the delete-confirmation dialog

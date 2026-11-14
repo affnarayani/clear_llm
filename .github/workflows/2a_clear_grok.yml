@@ -8,6 +8,13 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: write
+
+concurrency:
+  group: clear-llm-${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -20,6 +27,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -57,7 +65,7 @@ jobs:
       - name: Run bot
         env:
           DECRYPT_KEY: ${{ secrets.DECRYPT_KEY }}
-          IMGBBB_API_KEY: ${{ secrets.IMGBBB_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python clear_grok.py
 
@@ -66,5 +74,21 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-failure-screenshots
-          path: error_screenshot.png
+          path: error/error_screenshot.png
           if-no-files-found: ignore
+
+      - name: Commit and push locator/config changes
+        if: always()
+        run: |
+          if [ ! -d .git ]; then echo "Not a git checkout, skipping."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Stages all locator txt files, changed_locators.json, and config.json
+          git add locators/ json/config.json
+          if git diff --cached --quiet; then
+            echo "No locator/config changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update locators/config from automation run"
+          git pull --rebase --autostash || true
+          git push

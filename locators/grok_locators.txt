@@ -1,0 +1,9 @@
+# Grok locators. Edit expressions here; Python loads them verbatim.
+# Format: <descriptive_name> = <exact playwright expression>   # vision: <description for Gemini fallback>
+
+personalization_heading = page.get_by_role('heading', name='Personalization')   # vision: the "Personalization" heading in the Grok settings sidebar
+data_controls_settings_section = page.get_by_text('Data ControlsImprove the')   # vision: the "Data Controls" settings section heading on the Grok data page
+delete_all_conversations_button = page.locator('div').filter(has_text=re.compile(r'^Delete All ConversationsDelete all of your conversation data\.Delete$')).get_by_role('button')   # vision: the "Delete All Conversations" button in the data controls section
+delete_all_conversations_button = page.get_by_role("button", name="Delete all conversations")
+confirm_delete_conversations_button = page.get_by_role('button', name='Are you sure?')   # vision: the "Are you sure?" confirmation button in the delete dialog
+confirm_delete_conversations_button = page.get_by_role("button", name="Delete All Conversations")
